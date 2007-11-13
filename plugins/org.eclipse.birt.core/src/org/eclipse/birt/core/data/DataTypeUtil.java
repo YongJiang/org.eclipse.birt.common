@@ -14,11 +14,13 @@ package org.eclipse.birt.core.data;
 import java.math.BigDecimal;
 import java.sql.Blob;
 import java.sql.Clob;
+import java.sql.SQLException;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.text.DateFormat;
 import java.text.ParseException;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Locale;
@@ -32,6 +34,7 @@ import org.eclipse.birt.core.i18n.ResourceConstants;
 import org.eclipse.birt.core.i18n.ResourceHandle;
 import org.eclipse.birt.core.script.JavascriptEvalUtil;
 
+import com.ibm.icu.text.NumberFormat;
 import com.ibm.icu.util.ULocale;
 
 /**
@@ -48,7 +51,7 @@ public final class DataTypeUtil
 
 	// cache DateFormatter of ICU
 	private static Map dfMap = new HashMap( );
-	
+	private static Map nfMap = new HashMap( );
 	// Default Date/Time Style
 	private static int DEFAULT_DATE_STYLE = DateFormat.FULL;
 
@@ -101,7 +104,7 @@ public final class DataTypeUtil
 			case DataType.STRING_TYPE :
 				return toString( source );
 			case DataType.BLOB_TYPE :
-				return toBlob( source );
+				return toBytes( source );
 			case DataType.BINARY_TYPE :
 				return toBytes( source );
 			case DataType.SQL_DATE_TYPE:
@@ -208,10 +211,24 @@ public final class DataTypeUtil
 			}
 			catch ( NumberFormatException e )
 			{
-				throw new CoreException( ResourceConstants.CONVERT_FAILS,
-						new Object[]{
-								source.toString( ), "Integer"
-						} );
+				try
+				{
+					Number number = NumberFormat.getInstance( ULocale.getDefault( )).parse( (String)source );
+					if( number != null )
+						return new Integer( number.intValue( ));
+					
+					throw new CoreException( ResourceConstants.CONVERT_FAILS,
+							new Object[]{
+									source.toString( ), "Integer"
+							} );
+				}
+				catch ( ParseException e1 )
+				{
+					throw new CoreException( ResourceConstants.CONVERT_FAILS,
+							new Object[]{
+									source.toString( ), "Integer"
+							} );
+				}
 			}
 		}
 		else
@@ -283,11 +300,25 @@ public final class DataTypeUtil
 			}
 			catch ( NumberFormatException e )
 			{
-				throw new CoreException(
-						ResourceConstants.CONVERT_FAILS,
-						new Object[]{
-								source.toString( ), "BigDecimal"
-						});
+				try
+				{
+					Number number = NumberFormat.getInstance( ULocale.getDefault( ) )
+							.parse( (String) source );
+					if( number != null )
+						return new BigDecimal( number.toString( ) );
+					
+					throw new CoreException( ResourceConstants.CONVERT_FAILS,
+							new Object[]{
+									source.toString( ), "BigDecimal"
+							} );
+				}
+				catch ( ParseException e1 )
+				{
+					throw new CoreException( ResourceConstants.CONVERT_FAILS,
+							new Object[]{
+									source.toString( ), "BigDecimal"
+							} );
+				}
 			}
 		}
 		else
@@ -411,19 +442,19 @@ public final class DataTypeUtil
 
         if ( source instanceof Date )
         {
-       		return new Time( ((Date)source).getTime( ));
+       		return toSqlTime( (Date)source);
         }
         else if ( source instanceof String )
         {
             try
             {
-                return new Time( toDate((String ) source).getTime() );
+                return toSqlTime( toDate((String ) source) );
             }
             catch( Exception e )
             {
                 try
                 {
-                	return Time.valueOf( (String)source );
+                	return toSqlTime( (String)source );
                 }
                 catch ( Exception e1 )
                 {
@@ -440,6 +471,120 @@ public final class DataTypeUtil
     }
 
     /**
+     * 
+     * @param value
+     * @return
+     */
+    private static Time toSqlTime( String s )
+    {
+		int hour;
+		int addHour;
+		int minute;
+		int second;
+		int firstColon;
+		int secondColon;
+		int marker;
+		
+		if ( s == null )
+			throw new java.lang.IllegalArgumentException( );
+
+		firstColon = s.indexOf( ':' );
+		secondColon = s.indexOf( ':', firstColon + 1 );
+		for ( marker = secondColon + 1; marker < s.length( ); marker++ )
+		{
+			if ( !isDigitTen( s.charAt( marker ) ) )
+				break;
+		}
+		addHour = 0;
+		String markerValue = null;
+		if ( marker < s.length( ) )
+		{
+			markerValue = s.substring( marker ).trim( );
+			if ( "am".compareToIgnoreCase( markerValue ) == 0 )
+			{
+				addHour = 0;
+			}
+			else if ( "pm".compareToIgnoreCase( markerValue ) == 0 )
+			{
+				addHour = 12;
+			}
+			else
+			{
+				throw new java.lang.IllegalArgumentException( );
+			}
+		}
+		if ( firstColon <= 0  ||
+				secondColon <= 0 || secondColon >= s.length( ) - 1 )
+		{
+			throw new java.lang.IllegalArgumentException( );
+		}
+		hour = Integer.parseInt( s.substring( 0, firstColon ) );
+		if ( hour < 0 ||
+				( hour > 12 && markerValue != null && markerValue.length( ) > 0 ) )
+			throw new java.lang.IllegalArgumentException( );
+		hour += addHour;
+		if( hour > 24 )
+			throw new java.lang.IllegalArgumentException( );
+		minute = Integer.parseInt( s.substring( firstColon + 1, secondColon ) );
+		if( minute < 0 || minute > 60 )
+			throw new java.lang.IllegalArgumentException( );
+		if ( marker < s.length( ) )
+			second = Integer.parseInt( s.substring( secondColon + 1, marker ) );
+		else
+			second = Integer.parseInt( s.substring( secondColon + 1 ) );
+		if( second < 0 || second > 60 )
+			throw new java.lang.IllegalArgumentException( );
+		
+		return toSqlTime( hour, minute, second );
+	}
+    
+    /**
+     * 
+     * @param hour
+     * @param minute
+     * @param second
+     * @return
+     */
+    private static Time toSqlTime( int hour, int minute, int second )
+    {
+    	Calendar calendar = Calendar.getInstance( );
+		calendar.clear( );
+		calendar.set( Calendar.HOUR_OF_DAY, hour );
+		calendar.set( Calendar.MINUTE, minute );
+		calendar.set( Calendar.SECOND, second );
+		return new java.sql.Time( calendar.getTimeInMillis( ) );
+    }
+    
+    /**
+     * 
+     * @param c
+     * @return
+     */
+    private static boolean isDigitTen( char c )
+	{
+		if ( c <= '9' && c >= '0' )
+			return true;
+		return false;
+	}
+    
+    /**
+	 * 
+	 * @param date
+	 * @return
+	 */
+    private static java.sql.Time toSqlTime( Date date )
+    {
+    	Calendar calendar = Calendar.getInstance( );
+		calendar.clear( );
+		calendar.setTimeInMillis( date.getTime( ) );
+		calendar.set( Calendar.YEAR, 1970 );
+		calendar.set( Calendar.MONTH, 0 );
+		calendar.set( Calendar.DAY_OF_MONTH, 1 );
+		calendar.set( Calendar.MILLISECOND, 0 );
+		return new java.sql.Time( calendar.getTimeInMillis( ) );
+    }
+    
+    /**
      * Date -> Time
      * String -> Time
      * @param source
@@ -453,13 +598,13 @@ public final class DataTypeUtil
 
         if ( source instanceof Date )
         {
-    		return new java.sql.Date( ((Date)source).getTime( ));
+    		return toSqlDate( (Date)source );
         }
         else if ( source instanceof String )
         {
             try
             {
-                return new java.sql.Date( toDate((String ) source).getTime() );
+                return toSqlDate( toDate((String ) source) );
             }
             catch( Exception e )
             {
@@ -480,7 +625,24 @@ public final class DataTypeUtil
                             source.toString( ), "java.sql.Date"
                     } );
     }
-
+    
+    /**
+     * 
+     * @param date
+     * @return
+     */
+    private static java.sql.Date toSqlDate( Date date )
+    {
+    	Calendar calendar = Calendar.getInstance( );
+		calendar.clear( );
+		calendar.setTimeInMillis( date.getTime( ) );
+		calendar.set( Calendar.HOUR_OF_DAY, 0 );
+		calendar.set( Calendar.MINUTE, 0 );
+		calendar.set( Calendar.SECOND, 0 );
+		calendar.set( Calendar.MILLISECOND, 0 );		
+		return new java.sql.Date( calendar.getTimeInMillis( ) );
+    }
+    
     /**
 	 * A temp solution to the adoption of ICU4J to BIRT. Simply delegate
 	 * toDate( String, Locale) method.
@@ -666,11 +828,25 @@ public final class DataTypeUtil
 			}
 			catch ( NumberFormatException e )
 			{
-				throw new CoreException( 
-						ResourceConstants.CONVERT_FAILS,
-						new Object[]{
-								source.toString( ), "Double"
-						});
+				try
+				{
+					Number number = NumberFormat.getInstance( ULocale.getDefault( ) )
+							.parse( (String) source );
+					if( number != null )
+						return new Double( number.doubleValue( ));
+					
+					throw new CoreException( ResourceConstants.CONVERT_FAILS,
+							new Object[]{
+									source.toString( ), "Double"
+							} );
+				}
+				catch ( ParseException e1 )
+				{
+					throw new CoreException( ResourceConstants.CONVERT_FAILS,
+							new Object[]{
+									source.toString( ), "Double"
+							} );
+				}
 			}
 		}
 		else
@@ -732,21 +908,23 @@ public final class DataTypeUtil
 		{
 			return ((Time) source).toString( );
 		}
-		
-		if ( source instanceof java.sql.Date )
+		else if ( source instanceof java.sql.Date )
 		{
 			return ((java.sql.Date) source).toString( );
 		}
-		
-		if ( source instanceof Timestamp )
+		else if ( source instanceof Timestamp )
 		{
 			return ((java.sql.Timestamp) source).toString( );
 		}
-		if ( source instanceof Date )
+		else if ( source instanceof Date )
 		{
 			return toString( (Date) source, locale );
 		}
-		else
+		else if ( source instanceof Number )
+		{
+			return toString( (Number) source, locale );
+		}
+		else 
 		{
 			String str = "";
 			if ( source instanceof byte[] )
@@ -774,6 +952,30 @@ public final class DataTypeUtil
 		}
 	}
 
+	/**
+	 * 
+	 * @param source
+	 * @param locale
+	 * @return
+	 */
+	private static String toString( Number source, ULocale locale )
+	{
+		NumberFormat nf = (NumberFormat)nfMap.get( locale );
+		if( nf == null )
+		{
+			synchronized( nfMap )
+			{
+				nf = (NumberFormat)nfMap.get( locale );
+				if( nf == null )
+				{
+					nf = NumberFormat.getInstance( locale );
+					nfMap.put( locale, nf );
+				}
+			}
+		}
+		return nf.format( source );
+	}
+	
 	/**
 	 * Converting Blob to/from other types is not currently supported
 	 * @param source
@@ -809,9 +1011,24 @@ public final class DataTypeUtil
 
 		if ( source instanceof byte[] )
 			return (byte[]) source;
+		else if ( source instanceof Blob )
+		{
+			try
+			{
+				return ( (Blob) source ).getBytes( (long) 1,
+						(int) ( (Blob) source ).length( ) );
+			}
+			catch ( SQLException e )
+			{
+				throw new CoreException( ResourceConstants.CONVERT_FAILS,
+						new Object[]{
+								source.toString( ), "Binary"
+						} );
+
+			}
+		}
 		else
-			throw new CoreException(
-					ResourceConstants.CONVERT_FAILS,
+			throw new CoreException( ResourceConstants.CONVERT_FAILS,
 					new Object[]{
 							source.toString( ), "Binary"
 					} );
@@ -851,7 +1068,7 @@ public final class DataTypeUtil
 		else if ( Blob.class.isAssignableFrom( clazz )
 				|| clazz.getName( )
 						.equals( "org.eclipse.datatools.connectivity.oda.IBlob" ) )
-			return DataType.BINARY_TYPE;
+			return DataType.BLOB_TYPE;
 		else if ( clazz == Boolean.class )
 			return DataType.BOOLEAN_TYPE;
 		// any other types are not recognized nor supported;

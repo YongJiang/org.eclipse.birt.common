@@ -2,7 +2,7 @@ Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-Name: BIRT Core Package
 Bundle-SymbolicName: org.eclipse.birt.core; singleton:=true
-Bundle-Version: 2.2.0.qualifier
+Bundle-Version: 2.3.0.qualifier
 Bundle-ClassPath: .
 Bundle-Activator: org.eclipse.birt.core.internal.plugin.CorePlugin
 Bundle-Vendor: Eclipse.org
@@ -18,6 +18,7 @@ Export-Package: org.eclipse.birt.core.archive,
  org.eclipse.birt.core.framework.parser,
  org.eclipse.birt.core.i18n,
  org.eclipse.birt.core.plugin,
+ org.eclipse.birt.core.preference,
  org.eclipse.birt.core.script,
  org.eclipse.birt.core.script.bre;x-friends:="org.eclipse.birt.core.tests",
  org.eclipse.birt.core.template,

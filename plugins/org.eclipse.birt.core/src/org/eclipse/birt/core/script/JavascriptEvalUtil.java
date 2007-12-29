@@ -26,7 +26,7 @@ import org.eclipse.birt.core.i18n.ResourceConstants;
 import org.mozilla.javascript.Context;
 import org.mozilla.javascript.IdScriptableObject;
 import org.mozilla.javascript.ImporterTopLevel;
-
+import org.mozilla.javascript.NativeArray;
 import org.mozilla.javascript.RhinoException;
 import org.mozilla.javascript.Script;
 import org.mozilla.javascript.ScriptRuntime;
@@ -40,9 +40,6 @@ import org.mozilla.javascript.Wrapper;
  */
 public class JavascriptEvalUtil
 {
-    // shared scope for conversion to Java Script value
-	private static Scriptable sharedScope;
-	
 	private static Logger logger = Logger.getLogger( JavascriptEvalUtil.class.getName( ) );
 
 	/*
@@ -168,12 +165,20 @@ public class JavascriptEvalUtil
      */
     public static Object convertToJavascriptValue( Object value, Scriptable scope  )
     {
+    	// never convert java.sql.Time and java.sql.Date to java script's
+		// NativeDate
+		if ( value instanceof java.sql.Time || value instanceof java.sql.Date )
+		{
+			return value;
+		}
     	if ( value instanceof Date)
     	{
     		// Wrap in Javascript native Date class
     		Context cx = Context.enter();
     		try
     		{
+    			if ( scope == null )
+    				scope = new ImporterTopLevel( cx );
     			// Javascript and Java Date has the same conversion to/from a Long value
     			Long timeVal = new Long(((Date) value).getTime());
     			return ScriptRuntime.newObject( cx, scope, 
@@ -200,14 +205,7 @@ public class JavascriptEvalUtil
 	 */
 	public static Object convertToJavascriptValue( Object value )
 	{
-		if ( sharedScope == null )
-		{
-			Context cx = Context.enter( );
-			sharedScope = new ImporterTopLevel( cx );
-			Context.exit( );
-		}
-
-		return convertToJavascriptValue( value, sharedScope );
+		return convertToJavascriptValue( value, null );
 	}
     
 	/**
@@ -230,7 +228,7 @@ public class JavascriptEvalUtil
 			String jsClass = ((Scriptable) inputObj).getClassName();
 			if ( "Date".equals(jsClass) ) 
 			{
-					return new Date( (long) Context.toNumber( inputObj ) );
+				return Context.toType( inputObj, Date.class );
 			} 
 			else if ( "Boolean".equals(jsClass)) 
 			{
@@ -243,6 +241,16 @@ public class JavascriptEvalUtil
 			else if( "String".equals(jsClass) )
 			{
 				return inputObj.toString();
+			}
+			else if ( "Array".equals( jsClass ) )
+			{
+				Object[] obj = new Object[(int) ( (NativeArray) inputObj ).getLength( )];
+				for ( int i = 0; i < obj.length; i++ )
+				{
+					obj[i] = convertJavascriptValue( ( (NativeArray) inputObj ).get( i,
+							null ) );
+				}
+				return obj;
 			}
 		}
 		else if ( inputObj instanceof Wrapper )

@@ -31,7 +31,6 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import org.eclipse.birt.core.exception.BirtException;
 import org.eclipse.birt.core.script.JavascriptEvalUtil;
@@ -319,7 +318,7 @@ public class IOUtil
 	private static final int TYPE_FLOAT = 2;
 	private static final int TYPE_DOUBLE = 3;
 	private static final int TYPE_BIG_DECIMAL = 4;
-	private static final int TYPE_DATE = 5;
+	private static final int TYPE_DATE_TIME = 5;
 	private static final int TYPE_TIME = 6;
 	private static final int TYPE_TIME_STAMP = 7;
 	private static final int TYPE_BOOLEAN = 8;
@@ -331,6 +330,7 @@ public class IOUtil
 	
 	private static final int TYPE_JSObject = 14;
 	private static final int TYPE_LONG_STRING = 15;
+	private static final int TYPE_DATE = 16;
 
 	static
 	{
@@ -339,7 +339,7 @@ public class IOUtil
 		type2IndexMap.put( Float.class, new Integer( TYPE_FLOAT ) );
 		type2IndexMap.put( Double.class, new Integer( TYPE_DOUBLE ) );
 		type2IndexMap.put( BigDecimal.class, new Integer( TYPE_BIG_DECIMAL ) );
-		type2IndexMap.put( Date.class, new Integer( TYPE_DATE ) );
+		type2IndexMap.put( Date.class, new Integer( TYPE_DATE_TIME ) );
 		type2IndexMap.put( Time.class, new Integer( TYPE_TIME ) );
 		type2IndexMap.put( Timestamp.class, new Integer( TYPE_TIME_STAMP ) );
 		type2IndexMap.put( Boolean.class, new Integer( TYPE_BOOLEAN ) );
@@ -349,6 +349,7 @@ public class IOUtil
 		type2IndexMap.put( Map.class, new Integer( TYPE_MAP ) );
 		type2IndexMap.put( Serializable.class, new Integer( TYPE_SERIALIZABLE ) );
 		type2IndexMap.put( null, new Integer( TYPE_NULL ) );
+		type2IndexMap.put( java.sql.Date.class, new Integer( TYPE_DATE ) );
 		
 		type2IndexMap.put( IdScriptableObject.class, new Integer( TYPE_JSObject ) );
 	}
@@ -391,6 +392,22 @@ public class IOUtil
 			{
 				return TYPE_JSObject;
 			}
+			if ( Timestamp.class.isAssignableFrom( obValue.getClass( ) ) )
+			{
+				return TYPE_TIME_STAMP;
+			}
+			if( Time.class.isAssignableFrom( obValue.getClass( ) ) )
+			{
+				return TYPE_TIME;
+			}
+			if( java.sql.Date.class.isAssignableFrom( obValue.getClass( ) ) )
+			{
+				return TYPE_DATE;
+			}
+			if( Date.class.isAssignableFrom( obValue.getClass( ) ) )
+			{
+				return TYPE_DATE_TIME;
+			}
 			if ( obValue instanceof Serializable )
 			{
 				return TYPE_SERIALIZABLE;
@@ -432,11 +449,14 @@ public class IOUtil
 			case TYPE_BIG_DECIMAL :
 				obValue = new BigDecimal( dis.readUTF( ) );
 				break;
-			case TYPE_DATE :
+			case TYPE_DATE_TIME :
 				obValue = new Date( dis.readLong( ) );
 				break;
 			case TYPE_TIME :
 				obValue = new Time( dis.readLong( ) );
+				break;
+			case TYPE_DATE :
+				obValue = new java.sql.Date( dis.readLong( ) );
 				break;
 			case TYPE_TIME_STAMP :
 				obValue = new Timestamp( dis.readLong( ) );
@@ -530,11 +550,14 @@ public class IOUtil
 			case TYPE_BIG_DECIMAL :
 				dos.writeUTF( ( (BigDecimal) obValue ).toString( ) );
 				break;
-			case TYPE_DATE :
+			case TYPE_DATE_TIME :
 				dos.writeLong( ( (Date) obValue ).getTime( ) );
 				break;
 			case TYPE_TIME :
 				dos.writeLong( ( (Time) obValue ).getTime( ) );
+				break;
+			case TYPE_DATE :
+				dos.writeLong( ( ( java.sql.Date ) obValue ).getTime( ) );
 				break;
 			case TYPE_TIME_STAMP :
 				dos.writeLong( ( (Timestamp) obValue ).getTime( ) );
@@ -863,26 +886,18 @@ public class IOUtil
 	private static boolean isLongString( String str )
 	{
 		int strlen = str.length( );
-		int utflen = 0;
-		int c = 0;
-
-		/* use charAt instead of copying String to char array */
-		for ( int i = 0; i < strlen; i++ )
+		
+		if ( strlen > 65535 )
 		{
-			c = str.charAt( i );
-			if ( ( c >= 0x0001 ) && ( c <= 0x007F ) )
-			{
-				utflen++;
-			}
-			else if ( c > 0x07FF )
-			{
-				utflen += 3;
-			}
-			else
-			{
-				utflen += 2;
-			}
+			return true;
 		}
+		else if ( strlen < 21845 )
+		{
+			return false;
+		}
+		
+		int utflen = getBytesSize( str );
+
 		if ( utflen > 65535 )
 		{
 			return true;
@@ -901,9 +916,39 @@ public class IOUtil
 	 */
 	private static void writeUTF(  DataOutputStream dos, String str ) throws IOException
 	{
-		byte[] longBytes = convertString2Bytes( str );
-		dos.writeInt( longBytes.length );
-		dos.write( longBytes, 0 , longBytes.length );
+		int strlen = str.length( );
+		int c = 0;
+		int utflen = getBytesSize( str );
+		dos.writeInt( utflen );
+
+		int i = 0;
+		for ( ; i < strlen; i++ )
+		{
+			c = str.charAt( i );
+			if ( !( ( c >= 0x0001 ) && ( c <= 0x007F ) ) )
+				break;
+			dos.writeByte( (byte) c );
+		}
+
+		for ( ; i < strlen; i++ )
+		{
+			c = str.charAt( i );
+			if ( ( c >= 0x0001 ) && ( c <= 0x007F ) )
+			{
+				dos.writeByte( (byte) c );
+			}
+			else if ( c > 0x07FF )
+			{
+				dos.writeByte( (byte) ( 0xE0 | ( ( c >> 12 ) & 0x0F ) ) );
+				dos.writeByte( (byte) ( 0x80 | ( ( c >> 6 ) & 0x3F ) ) );
+				dos.writeByte( (byte) ( 0x80 | ( ( c >> 0 ) & 0x3F ) ) );
+			}
+			else
+			{
+				dos.writeByte( (byte) ( 0xC0 | ( ( c >> 6 ) & 0x1F ) ) );
+				dos.writeByte( (byte) ( 0x80 | ( ( c >> 0 ) & 0x3F ) ) );
+			}
+		}
 	}
 	
 	/**
@@ -921,19 +966,15 @@ public class IOUtil
 	}
 	
 	/**
-	 * private utility method to convert a String to byte[] 
+	 * private utility method to the size of a string in bytes 
 	 * 
 	 * @param str
 	 * @throws UTFDataFormatException
 	 */
-	private static byte[] convertString2Bytes( String str )
+	private static int getBytesSize( String str )
 	{
-		int strlen = str.length( );
-		int utflen = 0;
-		int c, count = 0;
-
-		/* use charAt instead of copying String to char array */
-		for ( int i = 0; i < strlen; i++ )
+		int c,utflen = 0;
+		for ( int i = 0; i < str.length( ); i++ )
 		{
 			c = str.charAt( i );
 			if ( ( c >= 0x0001 ) && ( c <= 0x007F ) )
@@ -949,65 +990,20 @@ public class IOUtil
 				utflen += 2;
 			}
 		}
-
-		byte[] bytearr = null;
-		bytearr = new byte[utflen];
-
-		int i = 0;
-		for ( i = 0; i < strlen; i++ )
-		{
-			c = str.charAt( i );
-			if ( !( ( c >= 0x0001 ) && ( c <= 0x007F ) ) )
-				break;
-			bytearr[count++] = (byte) c;
-		}
-
-		for ( ; i < strlen; i++ )
-		{
-			c = str.charAt( i );
-			if ( ( c >= 0x0001 ) && ( c <= 0x007F ) )
-			{
-				bytearr[count++] = (byte) c;
-
-			}
-			else if ( c > 0x07FF )
-			{
-				bytearr[count++] = (byte) ( 0xE0 | ( ( c >> 12 ) & 0x0F ) );
-				bytearr[count++] = (byte) ( 0x80 | ( ( c >> 6 ) & 0x3F ) );
-				bytearr[count++] = (byte) ( 0x80 | ( ( c >> 0 ) & 0x3F ) );
-			}
-			else
-			{
-				bytearr[count++] = (byte) ( 0xC0 | ( ( c >> 6 ) & 0x1F ) );
-				bytearr[count++] = (byte) ( 0x80 | ( ( c >> 0 ) & 0x3F ) );
-			}
-		}
-		return bytearr;
+		return utflen;
 	}
 	
 	/**
-	 * private utility method to convert a byte[] to String
+	 * private utility method helping to convert byte[] to a String 
 	 * 
-	 * @param bytearre
+	 * @param str
 	 * @throws UTFDataFormatException
 	 */
-	private static String convertBytes2String( byte[] bytearr ) throws UTFDataFormatException
+	private static int generateCharArray( char[] chararr, byte[] bytearr,
+			int count, int chararr_count ) throws UTFDataFormatException
 	{
-		int utflen = bytearr.length;
-		char[] chararr = new char[utflen];
 		int c, char2, char3;
-		int count = 0;
-		int chararr_count = 0;
-
-		while ( count < utflen )
-		{
-			c = (int) bytearr[count] & 0xff;
-			if ( c > 127 )
-				break;
-			count++;
-			chararr[chararr_count++] = (char) c;
-		}
-
+		int utflen = bytearr.length;
 		while ( count < utflen )
 		{
 			c = (int) bytearr[count] & 0xff;
@@ -1021,42 +1017,69 @@ public class IOUtil
 				case 5 :
 				case 6 :
 				case 7 :
-					/* 0xxxxxxx*/
+					// 0xxxxxxx
 					count++;
 					chararr[chararr_count++] = (char) c;
 					break;
 				case 12 :
 				case 13 :
-					/* 110x xxxx   10xx xxxx*/
+					// 110x xxxx 10xx xxxx
 					count += 2;
 					if ( count > utflen )
-						throw new UTFDataFormatException( "malformed input: partial character at end" );
+						throw new UTFDataFormatException( "Malformed input: partial character at end" );
 					char2 = (int) bytearr[count - 1];
 					if ( ( char2 & 0xC0 ) != 0x80 )
-						throw new UTFDataFormatException( "malformed input around byte "
+						throw new UTFDataFormatException( "Malformed input around byte "
 								+ count );
 					chararr[chararr_count++] = (char) ( ( ( c & 0x1F ) << 6 ) | ( char2 & 0x3F ) );
 					break;
 				case 14 :
-					/* 1110 xxxx  10xx xxxx  10xx xxxx */
+					// 1110 xxxx 10xx xxxx 10xx xxxx
 					count += 3;
 					if ( count > utflen )
-						throw new UTFDataFormatException( "malformed input: partial character at end" );
+						throw new UTFDataFormatException( "Malformed input: partial character at end" );
 					char2 = (int) bytearr[count - 2];
 					char3 = (int) bytearr[count - 1];
 					if ( ( ( char2 & 0xC0 ) != 0x80 )
 							|| ( ( char3 & 0xC0 ) != 0x80 ) )
-						throw new UTFDataFormatException( "malformed input around byte "
+						throw new UTFDataFormatException( "Malformed input around byte "
 								+ ( count - 1 ) );
 					chararr[chararr_count++] = (char) ( ( ( c & 0x0F ) << 12 )
 							| ( ( char2 & 0x3F ) << 6 ) | ( ( char3 & 0x3F ) << 0 ) );
 					break;
 				default :
-					/* 10xx xxxx,  1111 xxxx */
-					throw new UTFDataFormatException( "malformed input around byte "
+					// 10xx xxxx, 1111 xxxx
+					throw new UTFDataFormatException( "Malformed input around byte "
 							+ count );
 			}
 		}
+		return chararr_count;
+	}
+	
+	/**
+	 * private utility method to convert a byte[] to String
+	 * 
+	 * @param bytearre
+	 * @throws UTFDataFormatException
+	 */
+	private static String convertBytes2String( byte[] bytearr ) throws UTFDataFormatException
+	{
+		int utflen = bytearr.length;
+		char[] chararr = new char[utflen];
+		int c;
+		int chararr_count = 0;
+
+		int count = 0;
+		while ( count < utflen )
+		{
+			c = (int) bytearr[count] & 0xff;
+			if ( c > 127 )
+				break;
+			count++;
+			chararr[chararr_count++] = (char) c;
+		}
+		chararr_count = generateCharArray( chararr, bytearr, count, chararr_count );
+
 		// The number of chars produced may be less than utflen
 		return new String( chararr, 0, chararr_count );
 	}

@@ -14,7 +14,6 @@ package org.eclipse.birt.core.internal.function.impl;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Enumeration;
@@ -146,7 +145,7 @@ public class FunctionProviderImpl implements IFunctionProvider
 	 * 
 	 * @return
 	 */
-	private Map<String, Category> getCategoryMap( )
+	private synchronized Map<String, Category> getCategoryMap( )
 	{
 		if ( categories != null )
 			return categories;

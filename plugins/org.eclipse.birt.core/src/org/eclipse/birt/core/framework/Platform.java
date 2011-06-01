@@ -90,7 +90,9 @@ public class Platform
 			{
 				platform = null;
 				throw new BirtException( "org.eclipse.birt.core",
-						ResourceConstants.CANNOT_STARTUP_OSGI_PLATFORM, ex );
+						ResourceConstants.CANNOT_STARTUP_OSGI_PLATFORM,
+						(Object[]) null,
+						ex );
 			}
 		}
 	}
